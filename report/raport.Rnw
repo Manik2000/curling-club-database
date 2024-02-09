@@ -1,0 +1,753 @@
+\documentclass{mwrep}
+
+
+\usepackage[OT4]{polski}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.5cm, right=2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{indentfirst}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks,
+    linkcolor={black},
+    citecolor={blue!50!black},
+    urlcolor={blue!80!black}
+    pdfggtitle={Spis treści},
+    pdfpagemode=FullScreen,
+}
+
+<<include=F>>=
+pdf.options(encoding='CP1250')
+knitr::opts_chunk$set(fig.width=6, fig.height=4,
+                      fig.align='center',
+                      fig.path='Figs/',
+                      echo=F,
+                      warning=F, message=F)
+@
+
+
+<<needed libraries>>=
+library(ggplot2)
+library(dplyr)
+library(dbplyr)
+library(kableExtra)
+library(reshape2)
+library(moments)
+library(DBI)
+library(cowplot)
+library(data.table)
+library(scales)
+library(ggridges)
+library(viridis)
+library(lubridate)
+library(gridExtra)
+library(stringr)
+@
+
+<<colors>>=
+PLM_COLOR <- "#64C5EB"
+PLK_COLOR <- "#E84D8A"
+MPJ_COLOR <- "#FEB326"
+PLPM_COLOR <- "#7F58AF"
+@
+
+\title{Raport}
+\author{Marcin Kostrzewa, Marcin Miśkiewicz, Mikołaj Langner \\\\ 255749, 255756, 255716}
+\date{\today}
+
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+<<connect to DB>>=
+con <- dbConnect(RMySQL::MySQL(), host='giniewicz.it', dbname='team8', user='team8', password='te@mBP@ss')
+@
+
+<<read tables>>=
+players <- dbReadTable(con, "Players")
+personal_info <- dbReadTable(con, "PersonalInfo")
+finance <- dbReadTable(con, "Finance")
+salaries <- dbReadTable(con, "Salaries")
+coaches <- dbReadTable(con, "Coaches")
+management <- dbReadTable(con, "Management")
+equipment <- dbReadTable(con, "Equipment")
+teams <- dbReadTable(con, "Teams")
+leagues <- dbReadTable(con, "Leagues")
+matches <- dbReadTable(con, "Matches")
+@
+
+Założenia:
+\begin{itemize}
+  \item Wszystkie hipotezy są odrzucane/przyjmowane przy poziomie istotności $\alpha=0.05$.
+\end{itemize}
+
+\chapter{Terminarz spotkań}
+
+<<Get `Matches` table, echo=F>>=
+matches$date <- as.Date(matches$date, "%Y-%m-%d")
+matches$month <- as.Date(cut(matches$date, breaks = "month"))
+@
+
+<<fig.width=7, fig.height=3.5, fig.align="center", fig.cap="Liczba spotkań w całej lidze w ciągu miesiąca (z podziałem na rozgrywki).", fig.pos="H">>=
+ggplot(data = matches, aes(x = month)) + 
+    geom_bar(aes(fill = league_code))  + 
+    scale_x_date(date_breaks = "1 month", labels = date_format("%m/%y"))  +
+    theme(axis.text.x = element_text(angle = 60, vjust = .5)) +
+    scale_fill_manual(values = c(PLK_COLOR, MPJ_COLOR, PLM_COLOR, PLPM_COLOR)) +
+    ggtitle("Liczba spotkań na miesiąc (w całej lidze)")
+@
+
+<<fig.width=7, fig.height=3.5, fig.align="center", fig.cap="Liczba spotkań w klubie Curling Masters, w ciągu miesiąca (z podziałem na rozgrywki).", fig.pos="H">>=
+mask1 <- startsWith(as.vector(matches$red_team), "CM")
+mask2 <- startsWith(as.vector(matches$yellow_team), "CM")
+CM_matches <- matches[mask1 | mask2, ]
+
+ggplot(data = CM_matches, aes(x = month)) + 
+    geom_bar(aes(fill = league_code))  + 
+    scale_x_date(date_breaks = "1 month", labels = date_format("%m/%y"))  +
+    theme(axis.text.x = element_text(angle = 60, vjust = .5)) +
+    scale_fill_manual(values = c(PLK_COLOR, MPJ_COLOR, PLM_COLOR, PLPM_COLOR)) +
+    ggtitle("Liczba spotkań na miesiąc (w klubie Curling Masters)")
+@
+
+\chapter{Najlepsi zawodnicy}
+
+<<plot parameters>>=
+color <- 'blue'
+line_color <- 'red'
+line_width <- 1
+line_style <- 2
+opacity <- .6
+@
+
+<<add league>>=
+players <- players %>%
+  merge(teams, by='team_code', all.x = T) %>%
+  merge(leagues, by='league_code')
+@
+
+Na wykresie \ref{fig:shoot_hist} można zauważyć, że skuteczność większości zawodników przekracza połowę wykonanych rzutów z wartością modalną w okolicach $0.75$.
+
+<<distribution of shooting, fig.cap="\\label{fig:shoot_hist} Rozkład skuteczności rzutów", fig.pos="H">>=
+ggplot(players) + 
+  geom_histogram(aes(x=shooting_percentage, y=..density..), fill=color, alpha=opacity) +
+  geom_density(aes(x=shooting_percentage), lwd=line_width, col=line_color, linetype=line_style) +
+  xlim(0, 1) +
+  labs(x='Skuteczność rzutów', y='Gęstość') +
+  ggtitle("Skuteczność rzutów klubu Curling Masters")
+@
+
+<<shoot stats, echo=F>>=
+shoot <- players$shooting_percentage
+shoot_stats <- data.frame(srednia=mean(shoot), std=sd(shoot), kurtoza=kurtosis(shoot), skosnosc=skewness(shoot))
+colnames(shoot_stats) <- c("średnia", "odchylenie standardowe", "kurtoza", "skośność")
+shoot_stats %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:shoot_stat} Statystyki skuteczności rzutów") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+Na wykresach \ref{fig:shoot_box_pos} oraz \ref{fig:shoot_box_league} nie zauważa się znaczących różnic w kwartylach skuteczności zawodników ze względu na ich pozycję oraz ligę w jakiej grają.
+
+<<boxplot per position, fig.cap="\\label{fig:shoot_box_pos} Wykresy pudełkowe skuteczności rzutów pogrupowane względem pozycji zawodników", fig.pos="H">>=
+ggplot(players) + 
+    geom_boxplot(aes(x=position, y=shooting_percentage), fill=color, alpha=opacity) +
+    ylim(0, 1) +
+    labs(x='Pozycja', y='Skuteczność rzutów') +
+    ggtitle("Skuteczność rzutów zawodników Curling Masters")
+@
+
+<<shoot stats per position>>=
+shoot_stats_per_pos <- players %>% 
+  group_by(position) %>% 
+  summarise(srednia=mean(shooting_percentage),
+            std=sd(shooting_percentage),
+            kurtoza=kurtosis(shooting_percentage),
+            skosnosc=skewness(shooting_percentage))
+colnames(shoot_stats_per_pos) <- c("pozycja", "średnia", "odchylenie standardowe", "kurtoza", "skośność")
+shoot_stats_per_pos %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:shoot_stat_pos} Statystyki skuteczności rzutów pogrupowane ze względu na pozycję zawodników") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+W teście ANOVA dla skuteczność rzutów w grupach ze względu na pozycję zawodników p-wartość wynosi \Sexpr{summary(aov(players$shooting_percentage~players$position))[[1]][["Pr(>F)"]][1]}. Oznacza to, że odrzuca się na zadanym poziomie istotności różnica skuteczności dla różnych pozycji zawodników nie jest istotna statystycznie. 
+
+<<boxplot per league, fig.cap="\\label{fig:shoot_box_league} Wykresy pudełkowe skuteczności rzutów pogrupowane względem ligi", fig.pos="H">>=
+ggplot(players) + 
+    geom_boxplot(aes(x=league_code, y=shooting_percentage, fill=league_code)) +
+    ylim(0, 1) +
+    labs(x='Liga', y='Skuteczność rzutów') +
+    ggtitle("Skuteczność rzutów drużyn Curling Masters")  +
+    scale_fill_manual(values=c(MPJ_COLOR, PLK_COLOR, PLM_COLOR)) +
+    theme(legend.position="none")
+@
+
+<<shoot stats per league>>=
+shoot_stats_per_pos <- players %>% 
+  group_by(league_code) %>% 
+  summarise(srednia=mean(shooting_percentage),
+            std=sd(shooting_percentage),
+            kurtoza=kurtosis(shooting_percentage),
+            skosnosc=skewness(shooting_percentage))
+colnames(shoot_stats_per_pos) <- c("liga", "średnia", "odchylenie standardowe", "kurtoza", "skośność")
+shoot_stats_per_pos %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:shoot_stat_league} Statystyki skuteczności rzutów pogrupowane ze względu na ligę") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+W teście ANOVA dla skuteczności rzutów w grupach ze względu na ligę p-wartość wynosi \Sexpr{summary(aov(players$shooting_percentage~players$league_code))[[1]][["Pr(>F)"]][1]}. Oznacza to, że na zadanym poziomie istotności różnica skuteczności dla różnych lig, w których zawodnicy grają, nie jest istotna statystycznie. 
+
+<<boxplot per league and position, fig.cap="\\label{fig:shoot_box_team_pos} Wykresy pudełkowe pogrupowane względem ligi i pozycji zawodników", fig.pos="H">>=
+ggplot(players) + 
+    geom_boxplot(aes(x=league_code, y=shooting_percentage, fill=position), alpha=opacity) +
+    ylim(0, 1) +
+    labs(x='Liga', y='Skuteczność rzutów', fill='Pozycja') +
+    ggtitle("Skuteczność rzutów zawodników drużyn Curling Masters")
+@
+
+Najlepsi zawodnicy pod względem skuteczności rzutów przedstawieni są w tabeli \ref{tab:shoot_stat_team}. Jednakże, nie zauważa się w niej żadnych zależności ze względu na ligę oraz pozycję.
+
+<<best players>>=
+best <- players %>%
+  merge(personal_info, by="player_id", all.x=T) %>%
+  arrange(desc(shooting_percentage)) %>%
+  head(10) %>%
+  select(league_name, team_name, position, first_name, last_name, shooting_percentage)
+colnames(best) <- c('liga', 'drużyna', 'pozycja', 'imię', 'nazwisko', 'skuteczność')
+best %>%  kable(booktabs = TRUE, 
+        caption="\\label{tab:shoot_stat_team} Lista 10 najlepszych zawodników ze względu na skuteczność rzutów") 
+@
+
+\chapter{Analiza meczów}
+
+<<wins_and_loses>>=
+matches <- tbl(con, 'Matches')
+
+
+wins_and_loses <- matches %>% 
+  filter(red_team %like% "CM%" | yellow_team %like% "CM%") %>%
+  mutate(win=(total_red > total_yellow & red_team %like% "CM%") | 
+           (total_yellow > total_red & yellow_team %like% "CM%")) %>%
+  mutate(loss=1-win) %>%
+  select(league_code, win, loss) %>% 
+  group_by(league_code) %>% 
+  summarise(win=sum(win), loss=sum(loss)) %>% 
+  collect()
+
+colnames(wins_and_loses) <- c("Liga", "Wygrane", "Porażki")
+wins_and_loses %>% 
+  kable(booktabs=T,
+        caption="\\label{tab:wins_and_loses} Liczba wygranych i przegranych spotkań drużyn CM z podziałem na ligii.") %>% 
+  kable_styling(latex_options=c("hold_position"))
+
+wins_and_loses[, 2:3] <- wins_and_loses[, 2:3] / rowSums(wins_and_loses[, 2:3])
+wins_and_loses <- melt(wins_and_loses, id.vars="Liga", variable.name="Rezultat", value.name="freq")
+@
+
+<<wins_and_losses_plot, fig.pos="H", fig.cap="\\label{fig:freq_wins_losses} Wykres słupkowy częstości zwycieństw i porażek drużyn z podziałem na ligi.">>=
+LOSS_COLOR <- "#E04C63"
+WIN_COLOR <- "#14DB73"
+  
+ggplot(wins_and_loses) + 
+  geom_bar(aes(x=Liga, y=freq, fill=Rezultat), 
+           stat="identity", position=position_dodge()) + 
+  labs(x="Liga", y="Częstość") + 
+  scale_fill_manual(values=c(WIN_COLOR, LOSS_COLOR)) +
+  ggtitle("Rezultaty drużyn Curling Masters")
+@
+
+
+<<win_and_loses_per_matchweek>>=
+matches <- dbReadTable(con, "Matches")
+
+team_wins <- function(matches, team_code) {
+  matches <- matches %>% filter(red_team == team_code | yellow_team == team_code) %>% 
+    mutate(result = if_else((red_team == team_code & total_red > total_yellow) | 
+                                     (yellow_team == team_code & total_yellow > total_red), 1, 0))
+  matches$result
+}
+
+season1 <- "20/21"
+season2 <- "21/22"
+CM_teams <- list("CM PP", "CM SZ", "CM ST", "CM JY")
+
+matches1 <-  matches[matches$season == season1,]
+results <- sapply(CM_teams, team_wins, matches=matches1)
+wins <- data.frame(results)
+colnames(wins) <- CM_teams
+wins <- stack(wins)
+wins$matchweek <- 1:max(matches1$matchweek)
+@
+
+
+<<>>=
+CM_teams <- list("CM PP", "CM SZ", "CM ST", "CM JY")
+
+matches1 <-  matches[matches$season == season1,]
+results <- sapply(CM_teams, team_wins, matches=matches1)
+wins <- data.frame(results)
+colnames(wins) <- CM_teams
+wins <- stack(wins)
+wins$matchweek <- 1:nrow(results)
+
+p1 <- ggplot(wins) +
+  geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+  coord_fixed() +
+  theme(legend.position = "top", legend.title = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank()) +
+  scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR), labels=c('porażka', 'wygrana')) +
+  ggtitle("Sezon 20/21")
+@
+
+<<>>=
+CM_teams <- list("CM PP", "CM SZ", "CM ST", "CM JY")
+
+matches1 <-  matches[matches$season == season2,]
+results <- sapply(CM_teams, team_wins, matches=matches1)
+wins <- data.frame(results)
+colnames(wins) <- CM_teams
+wins <- stack(wins)
+wins$matchweek <- 1:nrow(results)
+
+p2 <- ggplot(wins) +
+  geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+  coord_fixed() +
+  theme(legend.position = "top", legend.title = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank()) +
+  scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR), labels=c('porażka', 'wygrana')) +
+  ggtitle("Sezon 21/22")
+@
+
+<<>>=
+CM_teams <- list("CM AA", "CM BB")
+
+matches1 <-  matches[matches$season == season1,]
+results <- sapply(CM_teams, team_wins, matches=matches1)
+wins <- data.frame(results)
+colnames(wins) <- CM_teams
+wins <- stack(wins)
+wins$matchweek <- 1:nrow(results)
+
+p3 <- ggplot(wins) +
+  geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+  coord_fixed() +
+  theme(legend.position = "none", axis.title.y=element_blank(), axis.title.x=element_blank()) +
+  scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR), labels=c('porażka', 'wygrana')) +
+  xlim(0, 40)
+@
+
+<<>>=
+  CM_teams <- list("CM AA", "CM BB")
+  
+  matches1 <-  matches[matches$season == season2,]
+  results <- sapply(CM_teams, team_wins, matches=matches1)
+  wins <- data.frame(results)
+  colnames(wins) <- CM_teams
+  wins <- stack(wins)
+  wins$matchweek <- 1:nrow(results)
+  
+p4 <- ggplot(wins) +
+    geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+    coord_fixed() +
+    theme(legend.position = "none", axis.title.y=element_blank(), axis.title.x=element_blank()) +
+    scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR)) +
+    xlim(0, 40)
+@
+
+<<>>=
+  red_pairs <- matches[str_detect(matches$red_team, "CM.*/"), ]$red_team
+  yellow_pairs <- matches[str_detect(matches$yellow_team, "CM.*/"), ]$yellow_team
+  CM_teams <- unique(c(red_pairs, yellow_pairs))
+    
+  matches1 <-  matches[matches$season == season1,]
+  results <- sapply(CM_teams, team_wins, matches=matches1)
+  wins <- data.frame(results)
+  colnames(wins) <- CM_teams
+  wins <- stack(wins)
+  wins$matchweek <- 1:nrow(results)
+  
+p5 <- ggplot(wins) +
+    geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+    coord_fixed() +
+    theme(legend.position = "none", axis.title.y=element_blank()) +
+    scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR)) +
+    xlim(0, 40)
+@
+
+<<>>=
+  red_pairs <- matches[str_detect(matches$red_team, "CM.*/"), ]$red_team
+  yellow_pairs <- matches[str_detect(matches$yellow_team, "CM.*/"), ]$yellow_team
+  CM_teams <- unique(c(red_pairs, yellow_pairs))
+    
+  matches1 <-  matches[matches$season == season2,]
+  results <- sapply(CM_teams, team_wins, matches=matches1)
+  wins <- data.frame(results)
+  colnames(wins) <- CM_teams
+  wins <- stack(wins)
+  wins$matchweek <- 1:nrow(results)
+  
+p6 <- ggplot(wins) +
+    geom_tile(aes(x=matchweek, y=ind, fill=factor(values)), lwd=1, color="white", linetype=1) +
+    coord_fixed() +
+    theme(legend.position = "none", axis.title.y=element_blank()) +
+    scale_fill_manual(values=c(LOSS_COLOR, WIN_COLOR)) +
+    xlim(0, 40)
+@
+
+<<fig.width=6, fig.height=10, fig.pos="H">>=
+library(gridExtra)
+grid.arrange(grobs=list(p1, p3, p5, p2, p4, p6), nrow=6, common.legend = TRUE)
+@
+
+\chapter{Budżet}
+
+Wykresy \ref{fig:profit} oraz \ref{fig:loss} przedstawiają wkład poszczególnych komponentów w przychody oraz wydatki klubu. Można zauważyć, że główny bilans toczy się pomiędzy sponsoringiem oraz pensjami dla pracowników. 
+
+<<mark profits and losses>>=
+finance$direction <- ifelse(finance$amount < 0, "wydatki", "przychody")
+finance <- finance %>% 
+  mutate(source = case_when(
+    !is.na(player_id) ~ 'składki',
+    !is.na(gear_id) ~ 'sprzęt',
+    !is.na(salary_id) ~ 'pensje',
+    !is.na(sponsor_id) ~ 'sponsorzy'
+  ))
+finance$abs_amount <- abs(finance$amount)
+finance$date <- as.Date(finance$date)
+finance <- finance %>%
+  arrange(date)
+@
+
+<<plot profits, fig.cap="\\label{fig:profit} Wykres miesięcznych przychodów klubu Curling Masters w czasie", fig.pos='H'>>=
+ggplot(finance %>%
+         filter(direction == 'przychody') %>%
+         group_by(date, source) %>%
+         summarise(monthly_amount=sum(abs_amount))) +
+  geom_line(aes(x=date, y=monthly_amount, col=source)) +
+  labs(x="Data", y="Zł", col="") +
+  ggtitle("Miesięczne przychody")
+@
+
+<<plot losses, fig.cap="\\label{fig:loss} Wykres miesięcznych wydatków klubu Curling Masters w czasie", fig.pos='H'>>=
+ggplot(finance %>%
+         filter(direction == 'wydatki') %>%
+         group_by(date, source) %>%
+         summarise(monthly_amount=sum(abs_amount))) +
+  geom_line(aes(x=date, y=monthly_amount, col=source)) +
+  labs(x="Data", y="Zł", col="") +
+  ggtitle("Miesięczne wydatki")
+@
+
+Na wykresie \ref{fig:P&L} obserwuje się miesięczny bilans klubu w czasie. W początkowym okresie klub wychodził na plus, po czym zaczął miewać długi, by w ostatniej dekadzie odrabiać straty.
+
+<<plot profits and losses, fig.cap="\\label{fig:P&L} Wykresy miesięcznych przychodów i wydatków klubu Curling Masters w czasie", fig.pos='H'>>=
+p1 <- ggplot(finance %>%
+         group_by(date, direction) %>%
+         summarise(monthly_amount=sum(abs_amount))) +
+  geom_line(aes(x=date, y=monthly_amount, col=direction)) +
+  labs(x="", y="Zł", col="")
+
+p2 <- ggplot(finance %>%
+         group_by(date) %>%
+         summarise(monthly_amount=sum(amount))) + 
+  geom_line(aes(x=date, y=monthly_amount), col='blue') +
+  labs(x="Data", y="Zł")
+
+plot_grid(p1, p2, labels=c("Przychody i wydatki", "Zysk"), ncol=1)
+@
+
+Wykres \ref{fig:budget} przedstawia skumulowany budżet klubu, który po ciężkim okresie długów zaczął wybijać się w ostatnim czasie ostatecznie na plus.
+
+<<plot budget, fig.cap="\\label{fig:budget} Wykres budżetu klubu Curling Masters w czasie od zapoczątkowania działalności", fig.pos='H'>>=
+finance$cumulated_amount <- cumsum(finance$amount)
+
+ggplot(finance %>%
+         group_by(date) %>%
+         summarise(cumulated_amount=last(cumulated_amount))) +
+  geom_line(aes(x=date, y=cumulated_amount), col='blue') +
+  labs(x="Data", y="Budżet [zł]") +
+  ggtitle("Skumulowany budżet klubu")
+@
+
+Tabele \ref{tab:salaries} oraz \ref{tab:salaries_role} przedstawiają pensje pracowników klubu, z których wynika, że stanowiska kierownicze są głównym wydatkiem i żeby w przyszłości zredukować ryzyko niewypłacalności klubu należałoby rozważyć zmianę polityki przyznawania pensji.
+
+<<expensive employees>>=
+coach_salary <- salaries %>%
+  filter(!is.na(coach_id)) %>%
+  merge(personal_info, by="coach_id") %>%
+  mutate(role='Coach') %>%
+  select(first_name, last_name, role, join_date, salary)
+management_salary <- salaries %>%
+  filter(!is.na(management_id)) %>%
+  merge(personal_info, by='management_id') %>%
+  merge(management, by='management_id') %>%
+  select(first_name, last_name, role, join_date, salary)
+employees_salary <- rbind(coach_salary, management_salary) %>% 
+  arrange(desc(salary)) %>%
+  head(10)
+colnames(employees_salary) = c("imię", "nazwisko", "stanowisko", "data zatrudnienia", "pensja [zł]")
+employees_salary %>%
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:salaries} Lista 10 najlepiej zarabiających pracowników klubu") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+<<salaries per role>>=
+salary_stats <- salaries %>%
+  merge(management, by="management_id", all.x=T) %>%
+  mutate(role=ifelse(is.na(coach_id), role, 'Coach')) %>%
+  group_by(role) %>%
+  summarise(srednia=mean(salary), odchylenie_standardowe=sd(salary)) %>%
+  arrange(desc(srednia))
+colnames(salary_stats) <- c("stanowisko", "średnia zarobków [zł]", "odchylenie standardowe [zł]")
+salary_stats %>%
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:salaries_role} Statystyki zarobków ze względu na stanowisko pracownika klubu") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+Tabela \ref{tab:eq_price} przedstawia cenę sprzętu dla drużyn poszczególnych lig. Drużyny juniorskie wydają się posiadać tańszy sprzęt, dlatego w razie wymiany sprzętu, byłby on najtańszy. JEdnakże, nie jest to główny wydatek klubu Curling Masters.
+
+<<expensive equipment>>=
+eq_price <- finance %>%
+  merge(equipment, by="gear_id") %>%
+  merge(teams, by='team_code') %>%
+  merge(leagues, by='league_code') %>%
+  mutate(unit_price=abs_amount/quantity) %>%
+  select(league_name, team_name, abs_amount, unit_price) %>%
+  arrange(desc(unit_price))
+colnames(eq_price) <- c('liga', "drużyna", 'cena sprzętu [zł]', 'jednostkowa cena [zł]')
+eq_price %>%  kable(booktabs = TRUE, 
+        caption="\\label{tab:eq_price} Lista ceny sprzętu ze względu na drużynę") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+W teście ANOVA dla jednostkowej ceny sprzętu w grupach ze względu na ligę p-wartość wynosi \Sexpr{summary(aov(eq_price$'jednostkowa cena'~eq_price$liga))[[1]][["Pr(>F)"]][1]}. Oznacza to, że pomiędzy ligami różnica w cenie sprzętu jest statystycznie istotna na zadanym poziomie ufności. Wynika to prawdopodobnie z niższych cen sprzętu juniorskiego.
+
+\chapter{Punkty w meczach}
+
+<<points_and_leagues>>=
+matches <- tbl(con, 'Matches')
+
+CM_points <- matches %>% 
+  filter(red_team %like% "CM%" | yellow_team %like% "CM%") %>%
+  mutate(our_teams_points = if_else(red_team %like% "CM%", total_red, total_yellow)) %>%
+  select(league_code, our_teams_points)  %>% collect()
+@
+
+
+<<points_boxplot, fig.cap="\\label{fig:points_boxplots} Wykresy pudełkowe zdobytych punktów z podziałem na ligii.", fig.pos="H">>=
+ggplot(CM_points) + 
+  geom_boxplot(aes(x=league_code, y=our_teams_points, fill=league_code)) + 
+  labs(x="Liga", y="Suma zdobytych punktów w meczu")  +
+  scale_fill_manual(values=c(MPJ_COLOR, PLK_COLOR, PLM_COLOR, PLPM_COLOR)) +
+  theme(legend.position="none") +
+  ggtitle("Punkty w meczach drużyn CM")
+@
+
+
+<<statistics_for_points>>=
+CM_points <- CM_points %>%
+  group_by(league_code) %>%
+  summarise(mean_=mean(our_teams_points, na.rm=T),
+            std=sd(our_teams_points, na.rm=T),
+            q1=quantile(our_teams_points, 0.25, na.rm=T),
+            q3=quantile(our_teams_points, 0.75, na.rm=T),
+            kurtosis_=kurtosis(our_teams_points, na.rm=T),
+            skewness_=skewness(our_teams_points, na.rm=T))
+colnames(CM_points) <- c("liga", "Średnia", "Odchylenie standardowe", "Q1", "Q3", "Kurtoza", "Skośność")
+CM_points %>% 
+  kable(booktabs=T,
+        align="c",
+        caption="Wskaźniki sumaryczne dla uzyskanych przez drużyny punktów z podziałem na ligi.") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+
+<<points_in_time>>=
+points_in_time <- matches %>% 
+  filter((red_team %like% "CM%" | yellow_team %like% "CM%") & league_code != "MPJ") %>%
+  mutate(our_teams_points = if_else(red_team %like% "CM%", total_red, total_yellow)) %>%
+  select(date, league_code, our_teams_points) %>%
+  collect
+
+points_in_time$date <- as.Date(points_in_time$date, "%Y-%m-%d")
+points_in_time$month <- as.Date(cut(points_in_time$date, breaks = "month"))
+
+points_in_time <- points_in_time %>% 
+  group_by(month, league_code) %>% 
+  summarise(avg_points=mean(our_teams_points, na.rm=T))
+
+colnames(points_in_time) <- c("month", "Liga", "avg_points")
+@
+
+<<points_in_time_plot, fig.pos="H", fig.cap="\\label{fig:points_in_time} Średnia ilość zdobytych w miesiącu punktów w czasie z podziałem na ligii.">>=
+ggplot(points_in_time) + 
+  geom_line(aes(x=month, y=avg_points, color=Liga)) + 
+  labs(x="miesiąc", y="średnia liczba zdobytych punktów w meczu") +
+  scale_x_date(date_breaks="1 month", labels=date_format("%m/%y")) +
+  theme(axis.text.x=element_text(angle=60, vjust=.5)) +
+  scale_color_manual(values=c(PLK_COLOR, PLM_COLOR, PLPM_COLOR)) +
+  ggtitle("Średnia liczba punktów w meczach drużyn CM")
+@
+
+\chapter{Cena sprzętu}
+
+<<read tables of equipment details>>=
+brooms <- dbReadTable(con, "Brooms")
+footwear <- dbReadTable(con, "Footwear")
+headwear <- dbReadTable(con, "Headwear")
+handwear <- dbReadTable(con, "Handwear")
+pants <- dbReadTable(con, "Pants")
+@
+
+<<consistent table>>=
+broom_price <- brooms %>%
+  mutate(part='szczotka', age=ifelse(purpose=='junior', 'juniorzy', 'dorośli'), gender=case_when(
+    purpose=="men" ~ "męskie", purpose=='women'~'damskie')) %>%
+  select(part, price, gender, age)
+foot_price <- footwear %>%
+  mutate(part='buty', age=ifelse(purpose=='junior', 'juniorzy', 'dorośli'), gender=case_when(
+    purpose=="men" ~ "męskie", purpose=='women'~'damskie')) %>%
+  select(part, price, gender, age)
+head_price <- headwear %>%
+  mutate(part='nakrycie', age=ifelse(purpose=='junior', 'juniorzy', 'dorośli'), gender=case_when(
+    purpose=="men" ~ "męskie", purpose=='women'~'damskie')) %>%
+  select(part, price, gender, age)
+hand_price <- handwear %>%
+  mutate(part='rękawice', age=NA, gender=case_when(
+    gender=='men'~'męskie', gender=='women'~'damskie')) %>%
+  select(part, price, gender, age)
+pant_price <- pants %>%
+  mutate(part='spodnie', age=NA, gender=ifelse(gender=='men', 'męskie', 'damskie')) %>%
+  select(part, price, gender, age)
+
+equipment_price <- rbind(broom_price, foot_price, head_price, hand_price, pant_price)
+@
+
+Na wykresie \ref{fig:eq_part} widać, że najtańszym elementem stroju graczy są rękawice, natomiast najdroższymi są buty oraz szczotki.
+
+<<price distribution per part, fig.pos='H', fig.cap="\\label{fig:eq_part} Wykresy pudełkowe ceny poszczególnych części sprzętui">>=
+ggplot(equipment_price) +
+  geom_boxplot(aes(y = price, x = part), fill = color, alpha=opacity) +
+  labs(y="Cena [zł]", x="Część sprzętu") +
+  ggtitle("Cena części sprzętu")
+@
+
+Na wykresach \ref{fig:eq_gender} oraz \ref{fig:shoot_box_league} widnieją rozkłady cen sprzętu z podziałem na odpowiednio płeć oraz docelową grupę wiekową. Kształty tych rozkładów znacząco się różnią, ale średnia w pierwszy przypadku wydaje się oscylować wokół tej samej wartości dla obu płci.
+
+<<eq price per gender, fig.pos='H', fig.cap="\\label{fig:eq_gender} Cena dostępnego sprzętu ze względu na przeznaczenie dla płci">>=
+ggplot(equipment_price %>% filter(!is.na(gender)), aes(x = price, y = gender, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(x='Cena [zł]', y='Płeć') +
+  ggtitle("Cena sprzętu a płeć")
+@
+
+<<eq price per gender stats>>=
+equipment_gender <- equipment_price %>% 
+  filter(!is.na(gender)) %>%
+  group_by(gender) %>% 
+  summarise(srednia=mean(price),
+            std=sd(price))
+colnames(equipment_gender) <- c("płeć", "średnia [zł]", "odchylenie standardowe [zł]")
+equipment_gender %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:eq_stats_gender} Statystyki ceny sprzętu względem przeznaczenia na płeć") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+W teście ANOVA dla ceny sprzętu w grupach ze względu na przeznaczenie sprzętu dla płci p-wartość wynosi \Sexpr{summary(aov(equipment_price$price~equipment_price$gender))[[1]][["Pr(>F)"]][1]}. Oznacza to, że na zadanym poziomie istotności różnica ceny sprzętu w podziale na płeć nie jest istotna statystycznie. 
+
+<<eq price per age, fig.pos='H', fig.cap="\\label{fig:eq_age} Cena dostępnego sprzętu ze względu na przeznaczenie dla grupy wiekowej">>=
+ggplot(equipment_price %>% filter(!is.na(age)), aes(x = price, y = age, fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 3, rel_min_height = 0.01) +
+  scale_fill_viridis(option = "C") +
+  labs(x='Cena [zł]', y='Grupa wiekowa') +
+  ggtitle("Cena sprzętu a wiek")
+@
+
+<<eq price per age stats>>=
+equipment_age <- equipment_price %>% 
+  filter(!is.na(age)) %>%
+  group_by(age) %>% 
+  summarise(srednia=mean(price),
+            std=sd(price))
+colnames(equipment_age) <- c("grupa wiekowa", "średnia [zł]", "odchylenie standardowe [zł]")
+equipment_age %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:eq_stats_gender} Statystyki ceny sprzętu względem przeznaczenia na grupę wiekową") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+W teście ANOVA dla ceny sprzętu w grupach ze względu na docelową grupę wiekową p-wartość wynosi \Sexpr{summary(aov(equipment_price$price~equipment_price$age))[[1]][["Pr(>F)"]][1]}. Oznacza to, że na zadanym poziomie istotności odrzuca się hipotezę o równości tej ceny w obu grupach wiekowych. Stwierdza się zatem, że ceny sprzętu juniorskiego są istotnie niższe.
+
+\chapter{Czas pracy}
+
+<<full employees>>=
+coaches_info <- coaches %>%
+  merge(personal_info, by='coach_id') %>%
+  merge(salaries, by="coach_id") %>%
+  mutate(role='Coach') %>%
+  select(role, join_date, retire_date, salary)
+management_info <- management  %>%
+  merge(personal_info, by='management_id') %>%
+  merge(salaries, by="management_id") %>%
+  select(role, join_date, retire_date, salary)
+
+employees = rbind(coaches_info, management_info) %>%
+  mutate(years=interval(ymd(join_date), ymd(retire_date)) %/% years(1))
+@
+
+Na wykresie \ref{fig:employment_role} widać znaczące różnice w okresie zatrudnienia pracowników klubu. Stanowiska kierowniczy są częściej zajęte przez tę sam osobę niż stanowiska niższe.
+
+<<plot employment time per role, fig.pos='H', fig.cap="\\label{fig:employment_role} Wykres pudełkowy czasu zatrudnienia pracowników klubu ze względu na ich stanowisko">>=
+ggplot(employees) +
+  geom_boxplot(aes(x=role, y=years), fill=color, alpha=opacity) +
+  labs(x='Stanowisko', y='Czas zatrudnienia [lata]') +
+  ggtitle("Rozkład okresu zatrudnienia w klubie") +
+  theme(axis.text.x=element_text(angle=90,hjust=1))
+@
+
+<<employment time stats>>=
+employment_role <- employees %>% 
+  filter(!is.na(years)) %>%
+  group_by(role) %>% 
+  summarise(srednia=mean(years),
+            std=sd(years)) %>%
+  arrange(desc(srednia))
+colnames(employment_role) <- c("stanowisko", "średnia [lata]", "odchylenie standardowe [lata]")
+employment_role %>% 
+  kable(booktabs = TRUE, 
+        caption="\\label{tab:shoot_stat_league} Statystyki czasu zatrudnienia pogrupowane ze względu na stanowisko pracownika") %>%
+  kable_styling(latex_options=c("hold_position"))
+@
+
+Do sprawdzenia ewentualnej zależności pomiędzy pensją pracowników, a ich okresem zatrudnienia służy wykres \ref{fig:employment_salary}, na którym widać niewielki wzrost długości tego okresu wraz ze wzrostem pensji pracownika.
+
+<<plot employment time vs salary, fig.pos='H', fig.cap="\\label{fig:employment_salary} Wykres rozproszenia zależności czasu zatrudnienia od pensji pracownika">>=
+ggplot(employees) +
+  geom_point(aes(x=salary, y=years), col=color, alpha=opacity) +
+  labs(x='Pensja [zł]', y='Czas zatrudnienia [lata]') +
+  ggtitle("Okres zatrudnienia od wynagrodzenia")
+@
+
+<<calculate correlation>>=
+retired = employees %>%
+  filter(!is.na(years))
+correlation <- cor.test(retired$years, retired$salary)
+@
+
+Korelacja pomiędzy czasem zatrudnienia a pensją pracowników wynosi \Sexpr{correlation$estimate}. W teście Pearsona daje to p-wartość równą \Sexpr{correlation$p.value}. Oznacza to, że na zadanym poziomie istotności nie odrzuca się hipotezy o braku korelacji pomiędzy tymi zmiennymi i nie jest ona istotna statystycznie. Możliwe, że ta zależność nie jest liniowa, bądź też po prostu nie istnieje.
+
+<<disconnetion, include=F>>=
+dbDisconnect(con)
+@
+
+\end{document}
