@@ -8,7 +8,7 @@ A database scheme for a sports club. Assignment from university course about dat
 
 ## Data 
 
-All data is generated randomly, but with realisticly. 
+All data is generated randomly, but realistically. 
 `txt` directory contains names, surnames, teams names that are used to generate data.
 
 ## Database
@@ -16,10 +16,11 @@ All data is generated randomly, but with realisticly.
 All tables are created, filled with data using python scripts that are in `src` directory. The name of the files indicate the purpose of the script.
 
 Both low level and high level python connectors are used to interact with the database:
-* `tables.py` contains the definition of the tables in sql language and `database_creator.py' uses it to create the tables on the side of the server,
+* `tables.py` contains the definition of the tables in sql language and `database_creator.py` uses it to create the tables on the side of the server,
 * `pandas` `write_to_sql` method is used to fill the tables with data.
 
-`main.py` is the main scipt that loads the data, creates table on the side of the server and fills them with data.
+`main.py` is the main scipt that glues everything together.
+
 
 ## Requirements
 
